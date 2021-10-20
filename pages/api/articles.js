@@ -1,5 +1,4 @@
-import Parser from "rss-parser";
-const parser = new Parser();
+import { MongoClient } from "mongodb";
 
 export default async function handler(req, res) {
   let input = req.query.input;
@@ -12,27 +11,35 @@ export default async function handler(req, res) {
   // Normalize input
   input = input.toLowerCase();
 
-  const articles = await getRSSData();
-  const filteredArticles = articles.filter((article) => {
-    const parts = article.title.toLowerCase().split(" ");
-
-    return parts.includes(input);
+  const uri = process.env.DATABASE_URL;
+  const client = new MongoClient(uri, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
   });
 
-  // If user's result returns no articles let's serve them random articles instead
-  if (filteredArticles.length === 0) {
-    return res
+  client.connect(async () => {
+    const collection = client.db("prod").collection("articles");
+    const articles = (await collection.find().toArray())[0].data;
+
+    await client.close();
+
+    const filteredArticles = articles.filter((article) => {
+      const parts = article.title.toLowerCase().split(" ");
+
+      return parts.includes(input);
+    });
+
+    // If user's result returns no articles let's serve them random articles instead
+    if (filteredArticles.length === 0) {
+      return res
+        .status(200)
+        .json({ articles: shuffle(articles).slice(0, 5), found: false });
+    }
+
+    res
       .status(200)
-      .json({ articles: shuffle(articles).slice(0, 5), found: false });
-  }
-
-  res.status(200).json({ articles: filteredArticles.slice(0, 5), found: true });
-}
-
-async function getRSSData() {
-  let feed = await parser.parseURL(process.env.RSS_URL);
-
-  return feed.items.map((item) => ({ title: item.title, link: item.link }));
+      .json({ articles: filteredArticles.slice(0, 5), found: true });
+  });
 }
 
 // https://stackoverflow.com/a/2450976
